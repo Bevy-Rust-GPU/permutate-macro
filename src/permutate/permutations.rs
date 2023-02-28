@@ -45,14 +45,6 @@ fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Iden
         panic!("Top-level permutations JSON is not an object");
     };
 
-    let Some(entry_points) = object.get("entry_points") else {
-        panic!("No top-level entry_points key in permutations file");
-    };
-
-    let JsonValue::Object(object) = entry_points else {
-        panic!("Permutations file entry_points field is not an object");
-    };
-
     let source_path = mod_path.to_string() + "::" + &fn_ident.to_string();
     let Some(entry_point) = object.get(&source_path) else {
         eprintln!("WARNING: No JSON entry point for source path {source_path:}");
