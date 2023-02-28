@@ -26,43 +26,56 @@ impl Parse for Permutation {
 }
 
 fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Ident>> {
-    let file = std::fs::read_to_string(file_path)
-        .unwrap_or_else(|e| panic!("Failed to read permutations file at {file_path:}: {e:}"));
-
-    let json = json::parse(&file).expect("Failed to parse permutations file");
-
-    let JsonValue::Object(object) = json else {
-        panic!();
+    let file = match std::fs::read_to_string(file_path) {
+        Ok(file) => file,
+        Err(e) => {
+            eprintln!("Failed to read permutations file at {file_path:}: {e:}");
+            return Default::default();
+        }
     };
 
-    let entry_points = object
-        .get("entry_points")
-        .expect("No top-level entry_points key in permutations file");
+    let json = match json::parse(&file) {
+        Ok(json) => json,
+        Err(e) => {
+            eprintln!("Failed to parse permutations file: {e:}");
+            return Default::default();
+        }
+    };
+
+    let JsonValue::Object(object) = json else {
+        panic!("Top-level permutations JSON is not an object");
+    };
+
+    let Some(entry_points) = object.get("entry_points") else {
+        panic!("No top-level entry_points key in permutations file");
+    };
+
     let JsonValue::Object(object) = entry_points else {
-        panic!();
+        panic!("Permutations file entry_points field is not an object");
     };
 
     let source_path = mod_path.to_string() + "::" + &fn_ident.to_string();
     let Some(entry_point) = object.get(&source_path) else {
+        eprintln!("No JSON entry point for source path {source_path:}");
         return Default::default()
     };
 
     let JsonValue::Array(array) = entry_point else {
-        panic!();
+        panic!("JSON entry point for source path {source_path:} is not an array");
     };
 
     let values = array
         .into_iter()
         .map(|value| {
             let JsonValue::Array(array) = value else {
-                panic!()
+                panic!("JSON permutation for entry point {entry_point:} is not an array");
             };
 
             array
                 .into_iter()
                 .map(|value| {
                     let Some(string) = value.as_str() else {
-                        panic!()
+                        panic!("JSON permutation variant for entry point {entry_point:} is not a string");
                     };
                     Ident::new(string, Span::call_site())
                 })
@@ -207,7 +220,22 @@ impl Permutations {
         self.permutations
             .iter()
             .flat_map(|permutation| match permutation {
-                PermutationsVariant::File(file) => Some(file.file.value()),
+                PermutationsVariant::File(file) => {
+                    let mod_path = file.mod_path.value();
+                    let path = file.file.value();
+
+                    let mut file_path = Span::call_site().unwrap().source_file().path();
+                    file_path.pop();
+
+                    let path = file_path.join(path);
+                    let path = path.to_str().expect("Path is not valid unicode");
+
+                    if std::fs::File::open(path).is_ok() {
+                        Some(file.file.value())
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             })
             .collect()
