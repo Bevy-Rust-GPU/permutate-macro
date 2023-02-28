@@ -25,6 +25,7 @@ pub fn macro_impl(
     let permutations = attr.permutations()?;
 
     let file_paths = permutations.file_paths();
+    let env_vars = permutations.env_vars();
 
     let permutations = permutations.into_permutations(&item_fn.sig.ident, parameters);
 
@@ -105,6 +106,7 @@ pub fn macro_impl(
 
     Ok(quote! {
         #(const _: &'static str = include_str!(#file_paths);)*
+        #(const _: Option<&'static str> = option_env!(#env_vars);)*
         #(#permutation_fns)*
     })
 }

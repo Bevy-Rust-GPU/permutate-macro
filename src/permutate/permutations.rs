@@ -29,7 +29,7 @@ fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Iden
     let file = match std::fs::read_to_string(file_path) {
         Ok(file) => file,
         Err(e) => {
-            eprintln!("Failed to read permutations file at {file_path:}: {e:}");
+            eprintln!("WARNING: Failed to read permutations file at {file_path:}: {e:}");
             return Default::default();
         }
     };
@@ -37,8 +37,7 @@ fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Iden
     let json = match json::parse(&file) {
         Ok(json) => json,
         Err(e) => {
-            eprintln!("Failed to parse permutations file: {e:}");
-            return Default::default();
+            panic!("Failed to parse permutations file: {e:}");
         }
     };
 
@@ -56,7 +55,7 @@ fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Iden
 
     let source_path = mod_path.to_string() + "::" + &fn_ident.to_string();
     let Some(entry_point) = object.get(&source_path) else {
-        eprintln!("No JSON entry point for source path {source_path:}");
+        eprintln!("WARNING: No JSON entry point for source path {source_path:}");
         return Default::default()
     };
 
@@ -134,9 +133,31 @@ impl Parse for PermutationsFile {
     }
 }
 
+pub struct PermutationsEnv {
+    pub ident: Ident,
+    pub paren: Paren,
+    pub var: LitStr,
+    pub comma: Comma,
+    pub mod_path: LitStr,
+}
+
+impl Parse for PermutationsEnv {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let content: ParseBuffer;
+        Ok(PermutationsEnv {
+            ident: input.parse()?,
+            paren: parenthesized!(content in input),
+            var: content.parse()?,
+            comma: content.parse()?,
+            mod_path: content.parse()?,
+        })
+    }
+}
+
 pub enum PermutationsVariant {
     Literal(Permutation),
     File(PermutationsFile),
+    Env(PermutationsEnv),
 }
 
 impl PermutationsVariant {
@@ -144,6 +165,7 @@ impl PermutationsVariant {
         match self {
             PermutationsVariant::Literal(literal) => literal.validate(parameters),
             PermutationsVariant::File(_) => Ok(()),
+            PermutationsVariant::Env(_) => Ok(()),
         }
     }
 
@@ -162,6 +184,16 @@ impl PermutationsVariant {
 
                 parse_file(&mod_path, path, fn_ident)
             }
+            PermutationsVariant::Env(env) => {
+                let mod_path = env.mod_path.value();
+                let var = env.var.value();
+
+                let Ok(path) = std::env::var(var) else {
+                    return Default::default();
+                };
+
+                parse_file(&mod_path, &path, fn_ident)
+            }
         }
     }
 }
@@ -169,7 +201,9 @@ impl PermutationsVariant {
 impl Parse for PermutationsVariant {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
-        if lookahead.peek(keywords::file) {
+        if lookahead.peek(keywords::env) {
+            Ok(PermutationsVariant::Env(input.parse()?))
+        } else if lookahead.peek(keywords::file) {
             Ok(PermutationsVariant::File(input.parse()?))
         } else {
             Ok(PermutationsVariant::Literal(input.parse()?))
@@ -235,6 +269,35 @@ impl Permutations {
                     } else {
                         None
                     }
+                }
+                PermutationsVariant::Env(env) => {
+                    let mod_path = env.mod_path.value();
+                    let env = env.var.value();
+
+                    let Ok(path) = std::env::var(env) else {
+                        return None;
+                    };
+
+                    if std::fs::File::open(&path).is_ok() {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn env_vars(&self) -> Vec<String> {
+        self.permutations
+            .iter()
+            .flat_map(|permutation| match permutation {
+                PermutationsVariant::Env(env) => {
+                    let mod_path = env.mod_path.value();
+                    let env = env.var.value();
+
+                    std::env::var(env).ok()
                 }
                 _ => None,
             })
