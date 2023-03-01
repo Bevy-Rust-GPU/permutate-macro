@@ -1,4 +1,4 @@
-`permutate-macro`
+# `permutate-macro`
 
 A procedural macro for permutating a function at compile time.
 
