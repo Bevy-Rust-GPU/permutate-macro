@@ -2,7 +2,7 @@
 
 # `permutate-macro`
 
-[![Documentation](https://img.shields.io/badge/docs-API-blue)](https://bevy-rust-gpu.github.io/bevy-rust-gpu/permutate-macro/)
+[![Documentation](https://img.shields.io/badge/docs-API-blue)](https://bevy-rust-gpu.github.io/permutate-macro/)
 
 A procedural macro for permutating a function at compile time.
 
