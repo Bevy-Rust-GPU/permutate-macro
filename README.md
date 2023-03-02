@@ -10,7 +10,7 @@ A procedural macro for permutating a function at compile time.
 
 ## Example
 
-```
+```rust
 #[permutate(
     parameters = {
         a: on | off,
@@ -37,7 +37,7 @@ fn foo() {
 
 Would expand to:
 
-```
+```rust
 fn foo__on__on__on() {
     println!("A");
     println!("B");
@@ -53,7 +53,7 @@ fn foo__off__off__off() {}
 
 In addition, permutations can be specified by file path, or an environment variable containing a file path:
 
-```
+```rust
 #[permutate(
     parameters = {
         foo: on | off,
@@ -69,7 +69,7 @@ fn func() {}
 
 The expected format of this file is as follows:
 
-```
+```json
 {
     "path::to::this::module::func": [
         ["on", "on"],
