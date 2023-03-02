@@ -76,8 +76,5 @@ The expected format of this file is as follows:
         ["off", "on"],
         ["off", "off"],
     ],
-    "path::to::some::other::module::func": [
-        ["on", "on"],
-    ],
 }
 ```
