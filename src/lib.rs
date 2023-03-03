@@ -15,6 +15,7 @@ use syn::parse_macro_input;
 /// For example:
 ///
 /// ```
+/// # use permutate_macro::permutate;
 /// #[permutate(
 ///     parameters = {
 ///         a: on | off,
@@ -59,6 +60,7 @@ use syn::parse_macro_input;
 /// In addition, permutations can be specified by file path,
 /// or an environment variable containing a file path:
 /// ```
+/// # use permutate_macro::permutate;
 /// #[permutate(
 ///     parameters = {
 ///         foo: on | off,
@@ -67,14 +69,14 @@ use syn::parse_macro_input;
 ///     permutations = [
 ///         file("permutations.json", "path::to::this::module"),
 ///         env("SOME_ENV_VAR", "path::to::this::module")
-///     ],
+///     ]
 /// )]
 /// fn func() {}
 /// ```
 ///
 /// The expected format of this file is as follows:
 ///
-/// ```
+/// ```json
 /// {
 ///     "path::to::this::module::func": [
 ///         ["on", "on"],

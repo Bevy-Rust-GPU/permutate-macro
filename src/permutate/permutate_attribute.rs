@@ -6,7 +6,7 @@ use syn::{
     Error,
 };
 
-use super::{keywords, Parameters, permutations::Permutations};
+use super::{keywords, permutations::Permutations, Parameters};
 
 pub enum PermutateArgument {
     Parameters(Parameters),
@@ -22,10 +22,7 @@ impl Parse for PermutateArgument {
         } else if lookahead.peek(keywords::permutations) {
             Ok(PermutateArgument::Permutations(Permutations::parse(input)?))
         } else {
-            Err(Error::new(
-                input.span(),
-                "Invalid parameter. Valid parameters are [parameters, permutations].",
-            ))
+            Err(lookahead.error())
         }
     }
 }
@@ -73,4 +70,3 @@ impl PermutateAttribute {
             .ok_or_else(|| Error::new(Span::call_site().into(), "Missing permutations"))
     }
 }
-
