@@ -247,7 +247,6 @@ impl Permutations {
             .iter()
             .flat_map(|permutation| match permutation {
                 PermutationsVariant::File(file) => {
-                    let mod_path = file.mod_path.value();
                     let path = file.file.value();
 
                     let mut file_path = Span::call_site().unwrap().source_file().path();
@@ -263,7 +262,6 @@ impl Permutations {
                     }
                 }
                 PermutationsVariant::Env(env) => {
-                    let mod_path = env.mod_path.value();
                     let env = env.var.value();
 
                     let Ok(path) = std::env::var(env) else {
@@ -286,7 +284,6 @@ impl Permutations {
             .iter()
             .flat_map(|permutation| match permutation {
                 PermutationsVariant::Env(env) => {
-                    let mod_path = env.mod_path.value();
                     let env = env.var.value();
 
                     std::env::var(env).ok()
