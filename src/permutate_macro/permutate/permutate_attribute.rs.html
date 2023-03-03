@@ -70,10 +70,6 @@
 <a href="#70" id="70">70</a>
 <a href="#71" id="71">71</a>
 <a href="#72" id="72">72</a>
-<a href="#73" id="73">73</a>
-<a href="#74" id="74">74</a>
-<a href="#75" id="75">75</a>
-<a href="#76" id="76">76</a>
 </pre><pre class="rust"><code><span class="kw">use </span>proc_macro::Span;
 <span class="kw">use </span>syn::{
     parse::{Parse, ParseStream},
@@ -82,7 +78,7 @@
     Error,
 };
 
-<span class="kw">use super</span>::{keywords, Parameters, permutations::Permutations};
+<span class="kw">use super</span>::{keywords, permutations::Permutations, Parameters};
 
 <span class="kw">pub enum </span>PermutateArgument {
     Parameters(Parameters),
@@ -98,10 +94,7 @@
         } <span class="kw">else if </span>lookahead.peek(keywords::permutations) {
             <span class="prelude-val">Ok</span>(PermutateArgument::Permutations(Permutations::parse(input)<span class="question-mark">?</span>))
         } <span class="kw">else </span>{
-            <span class="prelude-val">Err</span>(Error::new(
-                input.span(),
-                <span class="string">&quot;Invalid parameter. Valid parameters are [parameters, permutations].&quot;</span>,
-            ))
+            <span class="prelude-val">Err</span>(lookahead.error())
         }
     }
 }
@@ -149,6 +142,5 @@
             .ok_or_else(|| Error::new(Span::call_site().into(), <span class="string">&quot;Missing permutations&quot;</span>))
     }
 }
-
 </code></pre></div>
-</section></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.69.0-nightly (f77bfb733 2023-03-01)" data-search-js="search-2cde8914278f97ed.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
+</section></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.69.0-nightly (13471d3b2 2023-03-02)" data-search-js="search-2cde8914278f97ed.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>

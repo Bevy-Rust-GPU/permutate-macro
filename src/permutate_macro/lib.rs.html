@@ -89,6 +89,8 @@
 <a href="#89" id="89">89</a>
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
 </pre><pre class="rust"><code><span class="doccomment">//! Procedural macro for permutating functions at compile time.
 
 </span><span class="attr">#![feature(proc_macro_span)]
@@ -106,6 +108,7 @@
 /// For example:
 ///
 /// ```
+/// # use permutate_macro::permutate;
 /// #[permutate(
 ///     parameters = {
 ///         a: on | off,
@@ -150,6 +153,7 @@
 /// In addition, permutations can be specified by file path,
 /// or an environment variable containing a file path:
 /// ```
+/// # use permutate_macro::permutate;
 /// #[permutate(
 ///     parameters = {
 ///         foo: on | off,
@@ -158,14 +162,14 @@
 ///     permutations = [
 ///         file(&quot;permutations.json&quot;, &quot;path::to::this::module&quot;),
 ///         env(&quot;SOME_ENV_VAR&quot;, &quot;path::to::this::module&quot;)
-///     ],
+///     ]
 /// )]
 /// fn func() {}
 /// ```
 ///
 /// The expected format of this file is as follows:
 ///
-/// ```
+/// ```json
 /// {
 ///     &quot;path::to::this::module::func&quot;: [
 ///         [&quot;on&quot;, &quot;on&quot;],
@@ -181,4 +185,4 @@
         .into()
 }
 </code></pre></div>
-</section></main><div id="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.69.0-nightly (f77bfb733 2023-03-01)" data-search-js="search-2cde8914278f97ed.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
+</section></main><div id="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.69.0-nightly (13471d3b2 2023-03-02)" data-search-js="search-2cde8914278f97ed.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
