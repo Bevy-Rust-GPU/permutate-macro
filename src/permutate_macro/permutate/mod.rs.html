@@ -145,6 +145,40 @@
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
 </pre><pre class="rust"><code><span class="kw">pub mod </span>attributes;
 <span class="kw">pub mod </span>keywords;
 <span class="kw">pub mod </span>parameter_conditional;
@@ -156,7 +190,10 @@
 <span class="kw">use </span>proc_macro2::TokenStream;
 <span class="kw">use </span>quote::{quote, ToTokens};
 
-<span class="kw">use </span>syn::{parse::Parse, parse_quote, Error, Ident, ItemFn, Stmt};
+<span class="kw">use </span>syn::{
+    parse::Parse, parse_quote, visit_mut::VisitMut, Block, Error, ExprCall, Ident, ItemFn,
+    Signature,
+};
 
 <span class="kw">use </span><span class="self">self</span>::{
     attributes::Attributes, parameter_conditional::ParameterConditional, parameters::Parameters,
@@ -179,6 +216,77 @@
     <span class="comment">// Iterate permutations
     </span><span class="kw">let </span><span class="kw-2">mut </span>permutation_fns = <span class="macro">vec!</span>[];
 
+    <span class="kw">struct </span>PermutationVisitor&lt;<span class="lifetime">&#39;a</span>&gt; {
+        parameters: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Parameters,
+        permutation: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Vec&lt;Ident&gt;,
+        ident: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Ident,
+    }
+
+    <span class="kw">impl </span>VisitMut <span class="kw">for </span>PermutationVisitor&lt;<span class="lifetime">&#39;_</span>&gt; {
+        <span class="kw">fn </span>visit_signature_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, signature: <span class="kw-2">&amp;mut </span>Signature) {
+            <span class="kw">let </span><span class="kw-2">mut </span>inputs = <span class="macro">vec!</span>[];
+
+            <span class="kw">for </span>item <span class="kw">in </span>signature.inputs.iter() {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = apply_parameter_conditional(
+                    <span class="self">self</span>.parameters,
+                    <span class="self">self</span>.permutation,
+                    <span class="self">self</span>.ident,
+                    item.clone(),
+                )
+                .unwrap()
+                {
+                    inputs.push(item);
+                }
+            }
+
+            signature.inputs = inputs.into_iter().collect();
+
+            syn::visit_mut::visit_signature_mut(<span class="self">self</span>, signature);
+        }
+
+        <span class="kw">fn </span>visit_block_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, block: <span class="kw-2">&amp;mut </span>Block) {
+            <span class="kw">let </span><span class="kw-2">mut </span>stmts = <span class="macro">vec!</span>[];
+
+            <span class="kw">for </span>stmt <span class="kw">in </span>block.stmts.iter() {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = apply_parameter_conditional(
+                    <span class="self">self</span>.parameters,
+                    <span class="self">self</span>.permutation,
+                    <span class="self">self</span>.ident,
+                    stmt.clone(),
+                )
+                .unwrap()
+                {
+                    stmts.push(item);
+                }
+            }
+
+            block.stmts = stmts.into_iter().collect();
+
+            syn::visit_mut::visit_block_mut(<span class="self">self</span>, block);
+        }
+
+        <span class="kw">fn </span>visit_expr_call_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>, expr_call: <span class="kw-2">&amp;mut </span>ExprCall) {
+            <span class="kw">let </span><span class="kw-2">mut </span>args = <span class="macro">vec!</span>[];
+
+            <span class="kw">for </span>arg <span class="kw">in </span>expr_call.args.iter() {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(arg) = apply_parameter_conditional(
+                    <span class="self">self</span>.parameters,
+                    <span class="self">self</span>.permutation,
+                    <span class="self">self</span>.ident,
+                    arg.clone(),
+                )
+                .unwrap()
+                {
+                    args.push(arg);
+                }
+            }
+
+            expr_call.args = args.into_iter().collect();
+
+            syn::visit_mut::visit_expr_call_mut(<span class="self">self</span>, expr_call);
+        }
+    }
+
     <span class="kw">for </span>permutation <span class="kw">in </span>permutations.into_iter() {
         <span class="comment">// Create a new copy of the function
         </span><span class="kw">let </span><span class="kw-2">mut </span>item_fn = item_fn.clone();
@@ -192,61 +300,21 @@
                 .collect::&lt;String&gt;();
 
         <span class="kw">let </span>ident = Ident::new(<span class="kw-2">&amp;</span>ident, item_fn.sig.ident.span());
-        item_fn.sig.ident = ident;
+        item_fn.sig.ident = ident.clone();
 
         <span class="comment">// Macro ident for matching inner attributes
         </span><span class="kw">let </span>span = Span::call_site().into();
         <span class="kw">let </span>ident = Ident::new(<span class="string">&quot;permutate&quot;</span>, span);
 
-        <span class="comment">// Process function inputs
-        </span><span class="kw">let </span><span class="kw-2">mut </span>inputs = <span class="macro">vec!</span>[];
-
-        <span class="kw">for </span>item <span class="kw">in </span>item_fn.sig.inputs.into_iter() {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = apply_parameter_conditional(parameters, <span class="kw-2">&amp;</span>permutation, <span class="kw-2">&amp;</span>ident, item)<span class="question-mark">?
-            </span>{
-                inputs.push(item);
-            }
-        }
-
-        item_fn.sig.inputs = inputs.into_iter().collect();
-
-        <span class="comment">// Process block statements
-        </span><span class="kw">let </span><span class="kw-2">mut </span>stmts = <span class="macro">vec!</span>[];
-
-        <span class="kw">for </span>stmt <span class="kw">in </span>item_fn.block.stmts.into_iter() {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = apply_parameter_conditional(parameters, <span class="kw-2">&amp;</span>permutation, <span class="kw-2">&amp;</span>ident, stmt)<span class="question-mark">?
-            </span>{
-                stmts.push(item);
-            }
-        }
-
-        item_fn.block.stmts = stmts.into_iter().collect();
-
-        <span class="comment">// Process call expression arguments
-        </span><span class="kw">for </span><span class="kw-2">mut </span>stmt <span class="kw">in </span>item_fn.block.stmts.iter_mut() {
-            <span class="kw">match </span><span class="kw-2">&amp;mut </span>stmt {
-                Stmt::Expr(expr) | Stmt::Semi(expr, <span class="kw">_</span>) =&gt; <span class="kw">match </span>expr {
-                    syn::Expr::Call(call) =&gt; {
-                        <span class="kw">let </span><span class="kw-2">mut </span>args = <span class="macro">vec!</span>[];
-
-                        <span class="kw">for </span>arg <span class="kw">in </span>call.args.iter() {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(arg) = apply_parameter_conditional(
-                                parameters,
-                                <span class="kw-2">&amp;</span>permutation,
-                                <span class="kw-2">&amp;</span>ident,
-                                arg.clone(),
-                            )<span class="question-mark">? </span>{
-                                args.push(arg);
-                            }
-                        }
-
-                        call.args = args.into_iter().collect();
-                    }
-                    <span class="kw">_ </span>=&gt; (),
-                },
-                <span class="kw">_ </span>=&gt; (),
-            }
-        }
+        <span class="comment">// Walk syntax tree and apply attributes
+        </span>syn::visit_mut::visit_item_fn_mut(
+            <span class="kw-2">&amp;mut </span>PermutationVisitor {
+                parameters,
+                permutation: <span class="kw-2">&amp;</span>permutation,
+                ident: <span class="kw-2">&amp;</span>ident,
+            },
+            <span class="kw-2">&amp;mut </span>item_fn,
+        );
 
         permutation_fns.push(item_fn);
     }
@@ -275,7 +343,7 @@
             <span class="kw">let </span>parameter_conditional =
                 attr.parse_args_with(ParameterConditional::parse(parameters))<span class="question-mark">?</span>;
 
-            <span class="comment">// Safe to unwrap, since conditional parameters have already been validated 
+            <span class="comment">// Safe to unwrap, since conditional parameters have already been validated
             </span><span class="kw">let </span>idx = parameters
                 .parameters
                 .iter()
@@ -293,4 +361,4 @@
     <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(input))
 }
 </code></pre></div>
-</section></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.69.0-nightly (44cfafe2f 2023-03-03)" data-search-js="search-894761433ba8c506.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
+</section></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.70.0-nightly (f63ccaf25 2023-03-06)" data-search-js="search-8a59a8356673ec1f.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
