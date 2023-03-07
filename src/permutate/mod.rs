@@ -9,7 +9,10 @@ use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 
-use syn::{parse::Parse, parse_quote, Error, Ident, ItemFn, Stmt};
+use syn::{
+    parse::Parse, parse_quote, visit_mut::VisitMut, Block, Error, ExprCall, Ident, ItemFn,
+    Signature,
+};
 
 use self::{
     attributes::Attributes, parameter_conditional::ParameterConditional, parameters::Parameters,
@@ -32,6 +35,77 @@ pub fn macro_impl(
     // Iterate permutations
     let mut permutation_fns = vec![];
 
+    struct PermutationVisitor<'a> {
+        parameters: &'a Parameters,
+        permutation: &'a Vec<Ident>,
+        ident: &'a Ident,
+    }
+
+    impl VisitMut for PermutationVisitor<'_> {
+        fn visit_signature_mut(&mut self, signature: &mut Signature) {
+            let mut inputs = vec![];
+
+            for item in signature.inputs.iter() {
+                if let Some(item) = apply_parameter_conditional(
+                    self.parameters,
+                    self.permutation,
+                    self.ident,
+                    item.clone(),
+                )
+                .unwrap()
+                {
+                    inputs.push(item);
+                }
+            }
+
+            signature.inputs = inputs.into_iter().collect();
+
+            syn::visit_mut::visit_signature_mut(self, signature);
+        }
+
+        fn visit_block_mut(&mut self, block: &mut Block) {
+            let mut stmts = vec![];
+
+            for stmt in block.stmts.iter() {
+                if let Some(item) = apply_parameter_conditional(
+                    self.parameters,
+                    self.permutation,
+                    self.ident,
+                    stmt.clone(),
+                )
+                .unwrap()
+                {
+                    stmts.push(item);
+                }
+            }
+
+            block.stmts = stmts.into_iter().collect();
+
+            syn::visit_mut::visit_block_mut(self, block);
+        }
+
+        fn visit_expr_call_mut(&mut self, expr_call: &mut ExprCall) {
+            let mut args = vec![];
+
+            for arg in expr_call.args.iter() {
+                if let Some(arg) = apply_parameter_conditional(
+                    self.parameters,
+                    self.permutation,
+                    self.ident,
+                    arg.clone(),
+                )
+                .unwrap()
+                {
+                    args.push(arg);
+                }
+            }
+
+            expr_call.args = args.into_iter().collect();
+
+            syn::visit_mut::visit_expr_call_mut(self, expr_call);
+        }
+    }
+
     for permutation in permutations.into_iter() {
         // Create a new copy of the function
         let mut item_fn = item_fn.clone();
@@ -45,61 +119,21 @@ pub fn macro_impl(
                 .collect::<String>();
 
         let ident = Ident::new(&ident, item_fn.sig.ident.span());
-        item_fn.sig.ident = ident;
+        item_fn.sig.ident = ident.clone();
 
         // Macro ident for matching inner attributes
         let span = Span::call_site().into();
         let ident = Ident::new("permutate", span);
 
-        // Process function inputs
-        let mut inputs = vec![];
-
-        for item in item_fn.sig.inputs.into_iter() {
-            if let Some(item) = apply_parameter_conditional(parameters, &permutation, &ident, item)?
-            {
-                inputs.push(item);
-            }
-        }
-
-        item_fn.sig.inputs = inputs.into_iter().collect();
-
-        // Process block statements
-        let mut stmts = vec![];
-
-        for stmt in item_fn.block.stmts.into_iter() {
-            if let Some(item) = apply_parameter_conditional(parameters, &permutation, &ident, stmt)?
-            {
-                stmts.push(item);
-            }
-        }
-
-        item_fn.block.stmts = stmts.into_iter().collect();
-
-        // Process call expression arguments
-        for mut stmt in item_fn.block.stmts.iter_mut() {
-            match &mut stmt {
-                Stmt::Expr(expr) | Stmt::Semi(expr, _) => match expr {
-                    syn::Expr::Call(call) => {
-                        let mut args = vec![];
-
-                        for arg in call.args.iter() {
-                            if let Some(arg) = apply_parameter_conditional(
-                                parameters,
-                                &permutation,
-                                &ident,
-                                arg.clone(),
-                            )? {
-                                args.push(arg);
-                            }
-                        }
-
-                        call.args = args.into_iter().collect();
-                    }
-                    _ => (),
-                },
-                _ => (),
-            }
-        }
+        // Walk syntax tree and apply attributes
+        syn::visit_mut::visit_item_fn_mut(
+            &mut PermutationVisitor {
+                parameters,
+                permutation: &permutation,
+                ident: &ident,
+            },
+            &mut item_fn,
+        );
 
         permutation_fns.push(item_fn);
     }
@@ -128,7 +162,7 @@ where
             let parameter_conditional =
                 attr.parse_args_with(ParameterConditional::parse(parameters))?;
 
-            // Safe to unwrap, since conditional parameters have already been validated 
+            // Safe to unwrap, since conditional parameters have already been validated
             let idx = parameters
                 .parameters
                 .iter()
