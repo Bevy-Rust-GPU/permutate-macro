@@ -10,9 +10,12 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 
 use syn::{
-    parse::Parse, parse_quote, visit_mut::VisitMut, Block, Error, ExprCall, Ident, ItemFn,
-    Signature,
+    parse::Parse, parse_quote, visit_mut::VisitMut, AngleBracketedGenericArguments, Block, Error,
+    Expr, ExprCall, ExprLit, ExprMethodCall, GenericArgument, GenericMethodArgument, Ident, ItemFn,
+    Lit, LitBool, LitInt, Signature,
 };
+
+use crate::permutate::permutations::Permutation;
 
 use self::{
     attributes::Attributes, parameter_conditional::ParameterConditional, parameters::Parameters,
@@ -23,6 +26,7 @@ pub fn macro_impl(
     item_fn: ItemFn,
 ) -> Result<TokenStream, Error> {
     let parameters = attr.parameters()?;
+    let constants = attr.constants()?;
 
     // Calculate permutations
     let permutations = attr.permutations()?;
@@ -30,18 +34,122 @@ pub fn macro_impl(
     let file_paths = permutations.file_paths();
     let env_vars = permutations.env_vars();
 
-    let permutations = permutations.into_permutations(&item_fn.sig.ident, parameters);
+    let permutations = permutations.into_permutations(&item_fn.sig.ident, parameters, constants);
 
     // Iterate permutations
     let mut permutation_fns = vec![];
 
     struct PermutationVisitor<'a> {
         parameters: &'a Parameters,
-        permutation: &'a Vec<Ident>,
+        permutation: &'a Permutation,
         ident: &'a Ident,
     }
 
     impl VisitMut for PermutationVisitor<'_> {
+        fn visit_expr_method_call_mut(&mut self, expr_method_call: &mut ExprMethodCall) {
+            if let Some(turbofish) = expr_method_call.turbofish.as_mut() {
+                let mut args: Vec<GenericMethodArgument> = vec![];
+
+                for arg in turbofish.args.iter() {
+                    match arg {
+                        syn::GenericMethodArgument::Type(ty) => match ty {
+                            syn::Type::Macro(m) => {
+                                if m.mac.path.get_ident().unwrap() == self.ident {
+                                    let tokens = &m.mac.tokens;
+                                    let ident: Ident = parse_quote!(#tokens);
+                                    if let Some(val) = self.permutation.constants.get(&ident) {
+                                        args.push(GenericMethodArgument::Const(Expr::Lit(
+                                            ExprLit {
+                                                attrs: Default::default(),
+                                                lit: match val {
+                                                    permutations::ConstantVal::Bool(val) => {
+                                                        Lit::Bool(LitBool {
+                                                            value: *val,
+                                                            span: ident.span(),
+                                                        })
+                                                    }
+                                                    permutations::ConstantVal::Uint(val) => {
+                                                        Lit::Int(LitInt::new(
+                                                            &val.to_string(),
+                                                            ident.span(),
+                                                        ))
+                                                    }
+                                                    permutations::ConstantVal::Int(val) => {
+                                                        Lit::Int(LitInt::new(
+                                                            &val.to_string(),
+                                                            ident.span(),
+                                                        ))
+                                                    }
+                                                },
+                                            },
+                                        )))
+                                    } else {
+                                        args.push(arg.clone())
+                                    }
+                                }
+                            }
+                            _ => args.push(arg.clone()),
+                        },
+                        _ => args.push(arg.clone()),
+                    }
+                }
+
+                turbofish.args = args.into_iter().collect();
+            }
+
+            syn::visit_mut::visit_expr_method_call_mut(self, expr_method_call)
+        }
+
+        fn visit_angle_bracketed_generic_arguments_mut(
+            &mut self,
+            angle_bracketed_generic_args: &mut AngleBracketedGenericArguments,
+        ) {
+            let mut args: Vec<GenericArgument> = vec![];
+
+            for arg in angle_bracketed_generic_args.args.iter() {
+                match arg {
+                    GenericArgument::Type(ty) => match ty {
+                        syn::Type::Macro(m) => {
+                            if m.mac.path.get_ident().unwrap() == self.ident {
+                                let tokens = &m.mac.tokens;
+                                let ident: Ident = parse_quote!(#tokens);
+                                if let Some(val) = self.permutation.constants.get(&ident) {
+                                    args.push(GenericArgument::Const(Expr::Lit(ExprLit {
+                                        attrs: Default::default(),
+                                        lit: match val {
+                                            permutations::ConstantVal::Bool(val) => {
+                                                Lit::Bool(LitBool {
+                                                    value: *val,
+                                                    span: ident.span(),
+                                                })
+                                            }
+                                            permutations::ConstantVal::Uint(val) => Lit::Int(
+                                                LitInt::new(&val.to_string(), ident.span()),
+                                            ),
+                                            permutations::ConstantVal::Int(val) => Lit::Int(
+                                                LitInt::new(&val.to_string(), ident.span()),
+                                            ),
+                                        },
+                                    })))
+                                } else {
+                                    args.push(arg.clone())
+                                }
+                            }
+                        }
+                        _ => args.push(arg.clone()),
+                    },
+                    _ => args.push(arg.clone()),
+                }
+            }
+
+            angle_bracketed_generic_args.args = args.into_iter().collect();
+
+            syn::visit_mut::visit_angle_bracketed_generic_arguments_mut(
+                self,
+                angle_bracketed_generic_args,
+            );
+        }
+
         fn visit_signature_mut(&mut self, signature: &mut Signature) {
             let mut inputs = vec![];
 
@@ -113,8 +221,15 @@ pub fn macro_impl(
         // Generate name from permutation
         let ident = item_fn.sig.ident.to_string()
             + &permutation
+                .parameters
                 .iter()
                 .map(ToString::to_string)
+                .map(|t| "__".to_string() + &t)
+                .collect::<String>()
+            + &permutation
+                .constants
+                .iter()
+                .map(|(key, value)| key.to_string() + "_" + &value.to_string())
                 .map(|t| "__".to_string() + &t)
                 .collect::<String>();
 
@@ -150,7 +265,7 @@ pub fn macro_impl(
 /// and return None if the conditional evaluates false
 fn apply_parameter_conditional<'a, T>(
     parameters: &'a Parameters,
-    permutation: &'a Vec<Ident>,
+    permutation: &'a Permutation,
     attr_ident: &'a Ident,
     mut input: T,
 ) -> Result<Option<T>, Error>
@@ -169,7 +284,7 @@ where
                 .position(|parameter| parameter.ident == parameter_conditional.parameter)
                 .unwrap();
 
-            if permutation[idx] != parameter_conditional.variant {
+            if permutation.parameters[idx] != parameter_conditional.variant {
                 return Ok(None);
             };
         }

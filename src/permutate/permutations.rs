@@ -1,31 +1,146 @@
+use std::collections::BTreeMap;
+
 use json::JsonValue;
 use proc_macro2::Span;
 use syn::{
     bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
-    token::{Bracket, Comma, Or, Paren, Star},
-    Error, Ident, LitStr,
+    token::{Bracket, Comma, Or, Paren, Star, Brace, Colon},
+    Error, Ident, LitStr, braced, ExprLit, 
 };
 
 use super::{keywords, parameters::Parameters};
 
-pub struct Permutation {
-    pub _paren: Paren,
-    pub variants: Punctuated<PermutationVariant, Comma>,
+pub enum PermutationField {
+    Parameters(Punctuated<PermutationVariant, Comma>),
+    Constants(Punctuated<ConstantField, Comma>),
 }
 
-impl Parse for Permutation {
+impl Parse for PermutationField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let content: ParseBuffer;
-        Ok(Permutation {
-            _paren: parenthesized!(content in input),
-            variants: Punctuated::parse_separated_nonempty(&content)?,
+        let lookahead = input.lookahead1();
+        if lookahead.peek(keywords::parameters) {
+            let _ident: Ident = input.parse()?;
+            let _eq: syn::token::Eq = input.parse()?;
+            let content: ParseBuffer;
+            let _bracket = bracketed!(content in input);
+            Ok(PermutationField::Parameters(Punctuated::parse_separated_nonempty(&content)?))
+        } else if lookahead.peek(keywords::constants) {
+            let _ident: Ident = input.parse()?;
+            let _eq: syn::token::Eq = input.parse()?;
+            let content: ParseBuffer;
+            let _brace = braced!(content in input);
+            Ok(PermutationField::Constants(Punctuated::parse_terminated(&content)?))
+        } else {
+            Err(input.error("Unrecognized key"))
+        }
+    }
+}
+
+impl PermutationField {
+    fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
+        match self {
+            PermutationField::Parameters(params) => {
+                for (i, param) in params.iter().enumerate() {
+                    param.validate(parameters, i)?;
+                }
+            },
+            PermutationField::Constants(cs) => {
+                for constant in cs {
+                    constant.validate(constants)?;
+                }
+            },
+        }
+
+        Ok(())
+    }
+}
+
+pub struct ConstantField {
+    key: Ident,
+    _eq: syn::token::Eq,
+    value: ExprLit,
+}
+
+impl Parse for ConstantField {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(ConstantField {
+            key: input.parse()?,
+            _eq: input.parse()?,
+            value: input.parse()?,
         })
     }
 }
 
-fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Ident>> {
+impl ConstantField {
+    fn validate(&self, constants: &Constants) -> Result<(), Error> {
+        for constant in constants.constants.iter() {
+            let key = match constant {
+                ConstantsVariant::Bool(key) |
+                ConstantsVariant::Uint(key) |
+                ConstantsVariant::Int(key) => key,
+            };
+
+            if *key != self.key {
+                continue;
+            }
+
+            match (constant, &self.value.lit) {
+                (ConstantsVariant::Bool(_), syn::Lit::Bool(_)) |
+                (ConstantsVariant::Uint(_), syn::Lit::Int(_)) |
+                (ConstantsVariant::Int(_), syn::Lit::Int(_))  => (),
+                _ => return Err(Error::new(self.value.lit.span(), "Mismatched constant type"))
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub struct SynPermutation {
+    pub _brace: Brace,
+    pub fields: Punctuated<PermutationField, Comma>,
+}
+
+impl Parse for SynPermutation {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let content: ParseBuffer;
+        Ok(SynPermutation {
+            _brace: braced!(content in input),
+            fields: Punctuated::parse_separated_nonempty(&content)?,
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Permutation {
+    pub parameters: Vec<Ident>,
+    pub constants: BTreeMap<Ident, ConstantVal>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ConstantVal {
+    Bool(bool),
+    Uint(u32),
+    Int(i32),
+}
+
+impl ToString for ConstantVal {
+    fn to_string(&self) -> String {
+        match self {
+            ConstantVal::Bool(value) => value.to_string(),
+            ConstantVal::Uint(value) => value.to_string(),
+            ConstantVal::Int(value) => value.to_string(),
+        }
+    }
+}
+
+fn parse_file(
+    mod_path: &str,
+    file_path: &str,
+    fn_ident: &Ident,
+) -> Vec<Permutation> {
     let file = match std::fs::read_to_string(file_path) {
         Ok(file) => file,
         Err(e) => {
@@ -58,11 +173,27 @@ fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Iden
     let values = array
         .into_iter()
         .map(|value| {
-            let JsonValue::Array(array) = value else {
-                panic!("JSON permutation for entry point {entry_point:} is not an array");
+            let JsonValue::Object(object) = value else {
+                panic!("JSON permutation for entry point {entry_point:} is not an object");
             };
 
-            array
+            let Some(parameters) = object.get("parameters") else {
+                panic!("JSON permutation for entry point {entry_point:} has no parameters key");
+            };
+
+            let JsonValue::Array(parameters) = parameters else {
+                panic!("Parameters key is not an array");
+            };
+
+            let Some(constants) = object.get("constants") else {
+                panic!("JSON permutation for entry point {entry_point:} has no constants key");
+            };
+
+            let JsonValue::Object(constants) = constants else {
+                panic!("Constants key is not an object");
+            };
+
+            let parameters = parameters
                 .into_iter()
                 .map(|value| {
                     let Some(string) = value.as_str() else {
@@ -70,26 +201,78 @@ fn parse_file(mod_path: &str, file_path: &str, fn_ident: &Ident) -> Vec<Vec<Iden
                     };
                     Ident::new(string, Span::call_site())
                 })
-                .collect()
+                .collect();
+
+            let constants = constants.iter().map(|(key, value)| {
+                let ident = Ident::new(key.into(), Span::call_site());
+
+                if let Some(value) = value.as_bool() {
+                    (ident, ConstantVal::Bool(value))
+                }
+                else if let Some(value) = value.as_u32() {
+
+                    (ident, ConstantVal::Uint(value))
+                }
+                else if let Some(value) = value.as_i32() {
+
+                    (ident, ConstantVal::Int(value))
+                }
+                else {
+                    panic!("Unrecognized constant value type")
+                }
+            }).collect();
+
+            Permutation {
+                parameters, 
+                constants,
+            }
         })
-        .collect::<Vec<Vec<_>>>();
+        .collect::<Vec<_>>();
 
     values
 }
 
-impl Permutation {
+impl SynPermutation {
     /// Ensure that all variants are defined in the provided [`Parameters`]
-    fn validate(&self, parameters: &Parameters) -> Result<(), Error> {
-        for (i, variant) in self.variants.iter().enumerate() {
-            variant.validate(parameters, i)?;
+    fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
+        for field in self.fields.iter() {
+            field.validate(parameters, constants)?;
         }
 
         Ok(())
     }
 
-    fn into_permutations(&self, parameters: &Parameters) -> Vec<Vec<Ident>> {
+    pub fn parameters(&self) -> Result<&Punctuated<PermutationVariant, Comma>, Error> {
+        self.fields
+            .iter()
+            .find_map(|arg| {
+                if let PermutationField::Parameters(parameters) = arg {
+                    Some(parameters)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::new(Span::call_site().into(), "Missing parameters"))
+    }
+
+    pub fn constants(&self) -> Result<&Punctuated<ConstantField, Comma>, Error> {
+        self.fields
+            .iter()
+            .find_map(|arg| {
+                if let PermutationField::Constants(constants) = arg {
+                    Some(constants)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::new(Span::call_site().into(), "Missing constants"))
+    }
+
+    fn into_permutations(&self, parameters: &Parameters, constants: &Constants) -> Vec<Permutation> {
+        let params = self.parameters().unwrap();
+
         let mut idents = vec![];
-        for (i, variant) in self.variants.iter().enumerate() {
+        for (i, variant) in params.iter().enumerate() {
             let mut ids = vec![];
             match variant {
                 PermutationVariant::Explicit(explicit) => ids.extend(explicit.iter().cloned()),
@@ -100,7 +283,27 @@ impl Permutation {
             idents.push(ids);
         }
 
-        permutations(idents)
+        let consts = self.constants().unwrap();
+
+        permutations(idents).into_iter().map(|permutation| Permutation {
+            parameters: permutation,
+            constants: constants.constants.iter().map(|constant| {
+                let ident = match constant {
+                    ConstantsVariant::Bool(ident) |
+                    ConstantsVariant::Uint(ident) |
+                    ConstantsVariant::Int(ident) => ident,
+                };
+
+                let candidate = consts.iter().find(|constant| constant.key == *ident).unwrap();
+
+                match (constant, &candidate.value.lit) {
+                    (ConstantsVariant::Bool(ident), syn::Lit::Bool(value)) => (ident.clone(), ConstantVal::Bool(value.value)),
+                    (ConstantsVariant::Uint(_), syn::Lit::Int(value)) => (ident.clone(), ConstantVal::Uint(value.base10_parse::<u32>().unwrap())),
+                    (ConstantsVariant::Int(_), syn::Lit::Int(value)) => (ident.clone(), ConstantVal::Int(value.base10_parse::<i32>().unwrap())),
+                    _ => unreachable!() // Already validated
+                }
+            }).collect()
+        }).collect()
     }
 }
 
@@ -147,23 +350,29 @@ impl Parse for PermutationsEnv {
 }
 
 pub enum PermutationsVariant {
-    Literal(Permutation),
+    Literal(SynPermutation),
     File(PermutationsFile),
     Env(PermutationsEnv),
 }
 
 impl PermutationsVariant {
-    fn validate(&self, parameters: &Parameters) -> Result<(), Error> {
+    fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
         match self {
-            PermutationsVariant::Literal(literal) => literal.validate(parameters),
-            PermutationsVariant::File(_) => Ok(()),
-            PermutationsVariant::Env(_) => Ok(()),
+            PermutationsVariant::Literal(literal) => literal.validate(parameters, constants),
+            PermutationsVariant::File(_) => {
+                eprintln!("Warning: Validation is currently unsupported for permutation files.");
+                Ok(())
+            },
+            PermutationsVariant::Env(_) => {
+                eprintln!("Warning: Validation is currently unsupported for permutation environment vars.");
+                Ok(())
+            },
         }
     }
 
-    fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters) -> Vec<Vec<Ident>> {
+    fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters, constants: &Constants) -> Vec<Permutation> {
         match self {
-            PermutationsVariant::Literal(literal) => literal.into_permutations(parameters),
+            PermutationsVariant::Literal(literal) => literal.into_permutations(parameters, constants),
             PermutationsVariant::File(file) => {
                 let mod_path = file.mod_path.value();
                 let path = file.file.value();
@@ -203,6 +412,55 @@ impl Parse for PermutationsVariant {
     }
 }
 
+pub struct Constants {
+    pub _ident: Ident,
+    pub _eq: syn::token::Eq,
+    pub _brace: Brace,
+    pub constants: Punctuated<ConstantsVariant, Comma>,
+}
+
+impl Parse for Constants {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let content: ParseBuffer;
+        Ok(Constants {
+            _ident: input.parse()?,
+            _eq: input.parse()?,
+            _brace: braced!(content in input),
+            constants: Punctuated::parse_terminated(&content)?,
+        })
+    }
+}
+
+pub enum ConstantsVariant {
+    Bool(Ident),
+    Uint(Ident),
+    Int(Ident),
+}
+
+impl Parse for ConstantsVariant {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        let _colon: Colon = input.parse()?;
+
+        let lookahead = input.lookahead1();
+        if lookahead.peek(super::keywords::bool) {
+            let _tok: Ident = input.parse()?;
+            Ok(ConstantsVariant::Bool(ident))
+        }
+        else if lookahead.peek(super::keywords::u32) {
+            let _tok: Ident = input.parse()?;
+            Ok(ConstantsVariant::Uint(ident))
+        }
+        else if lookahead.peek(super::keywords::i32) {
+            let _tok: Ident = input.parse()?;
+            Ok(ConstantsVariant::Int(ident))
+        }
+        else {
+            Err(input.error("Unrecognized token"))
+        }
+    }
+}
+
 pub struct Permutations {
     pub _ident: Ident,
     pub _eq: syn::token::Eq,
@@ -224,18 +482,18 @@ impl Parse for Permutations {
 
 impl Permutations {
     /// Ensure that all variants are defined in the provided [`Parameters`]
-    pub fn validate(&self, parameters: &Parameters) -> Result<(), Error> {
+    pub fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
         for permutation in self.permutations.iter() {
-            permutation.validate(parameters)?;
+            permutation.validate(parameters, constants)?;
         }
 
         Ok(())
     }
 
-    pub fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters) -> Vec<Vec<Ident>> {
+    pub fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters, constants: &Constants) -> Vec<Permutation> {
         let mut permutations = vec![];
         for permutation in self.permutations.iter() {
-            permutations.extend(permutation.into_permutations(fn_ident, parameters))
+            permutations.extend(permutation.into_permutations(fn_ident, parameters, constants))
         }
         permutations.sort();
         permutations.dedup();

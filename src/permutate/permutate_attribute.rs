@@ -6,10 +6,15 @@ use syn::{
     Error,
 };
 
-use super::{keywords, permutations::Permutations, Parameters};
+use super::{
+    keywords,
+    permutations::{Constants, Permutations},
+    Parameters,
+};
 
 pub enum PermutateArgument {
     Parameters(Parameters),
+    Constants(Constants),
     Permutations(Permutations),
 }
 
@@ -19,6 +24,8 @@ impl Parse for PermutateArgument {
 
         if lookahead.peek(keywords::parameters) {
             Ok(PermutateArgument::Parameters(Parameters::parse(input)?))
+        } else if lookahead.peek(keywords::constants) {
+            Ok(PermutateArgument::Constants(Constants::parse(input)?))
         } else if lookahead.peek(keywords::permutations) {
             Ok(PermutateArgument::Permutations(Permutations::parse(input)?))
         } else {
@@ -28,16 +35,16 @@ impl Parse for PermutateArgument {
 }
 
 pub struct PermutateAttribute {
-    parameters: Punctuated<PermutateArgument, Comma>,
+    arguments: Punctuated<PermutateArgument, Comma>,
 }
 
 impl Parse for PermutateAttribute {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let attr = PermutateAttribute {
-            parameters: Punctuated::parse_separated_nonempty(input)?,
+            arguments: Punctuated::parse_separated_nonempty(input)?,
         };
 
-        attr.permutations()?.validate(attr.parameters()?)?;
+        attr.permutations()?.validate(attr.parameters()?, attr.constants()?)?;
 
         Ok(attr)
     }
@@ -45,10 +52,10 @@ impl Parse for PermutateAttribute {
 
 impl PermutateAttribute {
     pub fn parameters(&self) -> Result<&Parameters, Error> {
-        self.parameters
+        self.arguments
             .iter()
-            .find_map(|param| {
-                if let PermutateArgument::Parameters(parameters) = param {
+            .find_map(|arg| {
+                if let PermutateArgument::Parameters(parameters) = arg {
                     Some(parameters)
                 } else {
                     None
@@ -57,8 +64,21 @@ impl PermutateAttribute {
             .ok_or_else(|| Error::new(Span::call_site().into(), "Missing parameters"))
     }
 
+    pub fn constants(&self) -> Result<&Constants, Error> {
+        self.arguments
+            .iter()
+            .find_map(|arg| {
+                if let PermutateArgument::Constants(constants) = arg {
+                    Some(constants)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::new(Span::call_site().into(), "Missing constants"))
+    }
+
     pub fn permutations(&self) -> Result<&Permutations, Error> {
-        self.parameters
+        self.arguments
             .iter()
             .find_map(|param| {
                 if let PermutateArgument::Permutations(permutations) = param {
