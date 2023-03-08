@@ -12,27 +12,48 @@ A procedural macro for permutating a function at compile time.
 
 ```rust
 #[permutate(
-    parameters = {
-        a: on | off,
-        b: on | off,
-        c: on | off
-    },
-    constants = {},
-    permutations = [
-        (on, on, on),
-        (off, on, off),
-        (off, off, off)
-    ]
+   parameters = {
+       a: on | off,
+       b: on | off,
+       c: on | off
+   },
+   constants = {},
+   permutations = [
+       {
+           parameters = [
+               on,
+               on,
+               on
+           ],
+           constants = {}
+       },
+       {
+           parameters = [
+               off,
+               on,
+               off
+           ],
+           constants = {}
+       },
+       {
+           parameters = [
+               off,
+               off,
+               off
+           ],
+           constants = {}
+       }
+   ]
 )]
 fn foo() {
-    #[permutate(a = on)]
-    println!("A");
+   #[permutate(a = on)]
+   println!("A");
 
-    #[permutate(b = on)]
-    println!("B");
+   #[permutate(b = on)]
+   println!("B");
 
-    #[permutate(c = on)]
-    println!("C");
+   #[permutate(c = on)]
+   println!("C");
 }
 ```
 
