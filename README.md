@@ -17,6 +17,7 @@ A procedural macro for permutating a function at compile time.
         b: on | off,
         c: on | off
     },
+    constants = {},
     permutations = [
         (on, on, on),
         (off, on, off),
@@ -51,6 +52,71 @@ fn foo__off__on__off() {
 fn foo__off__off__off() {}
 ```
 
+Key-value constants can also be specified, and injected in place of generic parameters:
+
+```rust
+fn const_print<const VAL: u32>() {
+    println!({VAL:});
+}
+
+#[permutate(
+    parameters = {
+        a: on | off,
+        b: on | off,
+    },
+    constants = {
+        CONST_INT: u32,
+    },
+    permutations = [
+        {
+            parameters = [
+                on,
+                off
+            ],
+            constants = {
+                CONST_INT = 4
+            }
+        },
+        {
+            parameters = [
+                off,
+                on
+            ],
+            constants = {
+                CONST_INT = 8
+            }
+        },
+    ]
+)]
+fn bar() {
+    #[permutate(a = on)]
+    {
+        println!("A:");
+        const_print::<permutate!(CONST_INT)>();
+    }
+
+    #[permutate(b = on)]
+    {
+        println!("B:");
+        const_print::<permutate!(CONST_INT)>();
+    }
+}
+```
+
+Would expand to:
+
+```rust
+fn bar__on__off__CONST_INT_4() {
+    println!("A:");
+    const_print::<4>();
+}
+
+fn bar__off__on__CONST_INT_8() {
+    println!("B:");
+    const_print::<8>();
+}
+```
+
 In addition, permutations can be specified by file path, or an environment variable containing a file path:
 
 ```rust
@@ -59,6 +125,7 @@ In addition, permutations can be specified by file path, or an environment varia
         foo: on | off,
         bar: on | off
     },
+    constants = {},
     permutations = [
         file("permutations.json", "path::to::this::module"),
         env("SOME_ENV_VAR", "path::to::this::module")
@@ -71,11 +138,35 @@ The expected format of this file is as follows:
 
 ```json
 {
-    "path::to::this::module::func": [
-        ["on", "on"],
-        ["off", "on"],
-        ["off", "off"],
-    ],
+  "path::to::this::module::func": [
+    {
+      "parameters": [
+        "on",
+        "on",
+      ],
+      "constants": {
+        "CONST_INT": 4,
+      }
+    },
+    {
+      "parameters": [
+        "off",
+        "on",
+      ],
+      "constants": {
+        "CONST_INT": 6,
+      }
+    },
+    {
+      "parameters": [
+        "off",
+        "off",
+      ],
+      "constants": {
+        "CONST_INT": 8,
+      }
+    }
+  ],
 }
 ```
 
