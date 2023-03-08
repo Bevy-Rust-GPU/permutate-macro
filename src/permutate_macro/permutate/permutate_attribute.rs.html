@@ -70,6 +70,26 @@
 <a href="#70" id="70">70</a>
 <a href="#71" id="71">71</a>
 <a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
 </pre><pre class="rust"><code><span class="kw">use </span>proc_macro::Span;
 <span class="kw">use </span>syn::{
     parse::{Parse, ParseStream},
@@ -78,10 +98,15 @@
     Error,
 };
 
-<span class="kw">use super</span>::{keywords, permutations::Permutations, Parameters};
+<span class="kw">use super</span>::{
+    keywords,
+    permutations::{Constants, Permutations},
+    Parameters,
+};
 
 <span class="kw">pub enum </span>PermutateArgument {
     Parameters(Parameters),
+    Constants(Constants),
     Permutations(Permutations),
 }
 
@@ -91,6 +116,8 @@
 
         <span class="kw">if </span>lookahead.peek(keywords::parameters) {
             <span class="prelude-val">Ok</span>(PermutateArgument::Parameters(Parameters::parse(input)<span class="question-mark">?</span>))
+        } <span class="kw">else if </span>lookahead.peek(keywords::constants) {
+            <span class="prelude-val">Ok</span>(PermutateArgument::Constants(Constants::parse(input)<span class="question-mark">?</span>))
         } <span class="kw">else if </span>lookahead.peek(keywords::permutations) {
             <span class="prelude-val">Ok</span>(PermutateArgument::Permutations(Permutations::parse(input)<span class="question-mark">?</span>))
         } <span class="kw">else </span>{
@@ -100,16 +127,16 @@
 }
 
 <span class="kw">pub struct </span>PermutateAttribute {
-    parameters: Punctuated&lt;PermutateArgument, Comma&gt;,
+    arguments: Punctuated&lt;PermutateArgument, Comma&gt;,
 }
 
 <span class="kw">impl </span>Parse <span class="kw">for </span>PermutateAttribute {
     <span class="kw">fn </span>parse(input: syn::parse::ParseStream) -&gt; syn::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>attr = PermutateAttribute {
-            parameters: Punctuated::parse_separated_nonempty(input)<span class="question-mark">?</span>,
+            arguments: Punctuated::parse_separated_nonempty(input)<span class="question-mark">?</span>,
         };
 
-        attr.permutations()<span class="question-mark">?</span>.validate(attr.parameters()<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+        attr.permutations()<span class="question-mark">?</span>.validate(attr.parameters()<span class="question-mark">?</span>, attr.constants()<span class="question-mark">?</span>)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(attr)
     }
@@ -117,10 +144,10 @@
 
 <span class="kw">impl </span>PermutateAttribute {
     <span class="kw">pub fn </span>parameters(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>Parameters, Error&gt; {
-        <span class="self">self</span>.parameters
+        <span class="self">self</span>.arguments
             .iter()
-            .find_map(|param| {
-                <span class="kw">if let </span>PermutateArgument::Parameters(parameters) = param {
+            .find_map(|arg| {
+                <span class="kw">if let </span>PermutateArgument::Parameters(parameters) = arg {
                     <span class="prelude-val">Some</span>(parameters)
                 } <span class="kw">else </span>{
                     <span class="prelude-val">None
@@ -129,8 +156,21 @@
             .ok_or_else(|| Error::new(Span::call_site().into(), <span class="string">&quot;Missing parameters&quot;</span>))
     }
 
+    <span class="kw">pub fn </span>constants(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>Constants, Error&gt; {
+        <span class="self">self</span>.arguments
+            .iter()
+            .find_map(|arg| {
+                <span class="kw">if let </span>PermutateArgument::Constants(constants) = arg {
+                    <span class="prelude-val">Some</span>(constants)
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">None
+                </span>}
+            })
+            .ok_or_else(|| Error::new(Span::call_site().into(), <span class="string">&quot;Missing constants&quot;</span>))
+    }
+
     <span class="kw">pub fn </span>permutations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>Permutations, Error&gt; {
-        <span class="self">self</span>.parameters
+        <span class="self">self</span>.arguments
             .iter()
             .find_map(|param| {
                 <span class="kw">if let </span>PermutateArgument::Permutations(permutations) = param {
@@ -143,4 +183,4 @@
     }
 }
 </code></pre></div>
-</section></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.70.0-nightly (f63ccaf25 2023-03-06)" data-search-js="search-8a59a8356673ec1f.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
+</section></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="permutate_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.70.0-nightly (e3dfeeaa4 2023-03-07)" data-search-js="search-8a59a8356673ec1f.js" data-settings-js="settings-f0c5c39777a9a2f6.js" data-settings-css="settings-0bcba95ff279c1db.css" ></div></body></html>
