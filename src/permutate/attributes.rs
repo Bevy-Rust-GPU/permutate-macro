@@ -38,7 +38,7 @@ where
 {
     pub fn position(&self, ident: &Ident) -> Option<usize> {
         self.attrs.iter().position(|attr| {
-            let Some(candidate) = attr.path.get_ident() else {
+            let Some(candidate) = attr.path().get_ident() else {
         return false;
     };
 

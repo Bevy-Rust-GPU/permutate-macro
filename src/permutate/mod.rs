@@ -11,7 +11,7 @@ use quote::{quote, ToTokens};
 
 use syn::{
     parse::Parse, parse_quote, visit_mut::VisitMut, AngleBracketedGenericArguments, Block, Error,
-    Expr, ExprCall, ExprLit, ExprMethodCall, GenericArgument, GenericMethodArgument, Ident, ItemFn,
+    Expr, ExprCall, ExprLit, ExprMethodCall, GenericArgument, Ident, ItemFn,
     Lit, LitBool, LitInt, Signature,
 };
 
@@ -48,17 +48,17 @@ pub fn macro_impl(
     impl VisitMut for PermutationVisitor<'_> {
         fn visit_expr_method_call_mut(&mut self, expr_method_call: &mut ExprMethodCall) {
             if let Some(turbofish) = expr_method_call.turbofish.as_mut() {
-                let mut args: Vec<GenericMethodArgument> = vec![];
+                let mut args: Vec<GenericArgument> = vec![];
 
                 for arg in turbofish.args.iter() {
                     match arg {
-                        syn::GenericMethodArgument::Type(ty) => match ty {
+                        syn::GenericArgument::Type(ty) => match ty {
                             syn::Type::Macro(m) => {
                                 if m.mac.path.get_ident().unwrap() == self.ident {
                                     let tokens = &m.mac.tokens;
                                     let ident: Ident = parse_quote!(#tokens);
                                     if let Some(val) = self.permutation.constants.get(&ident) {
-                                        args.push(GenericMethodArgument::Const(Expr::Lit(
+                                        args.push(GenericArgument::Const(Expr::Lit(
                                             ExprLit {
                                                 attrs: Default::default(),
                                                 lit: match val {
