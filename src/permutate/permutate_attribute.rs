@@ -9,12 +9,14 @@ use syn::{
 use super::{
     keywords,
     permutations::{Constants, Permutations},
+    types::Types,
     Parameters,
 };
 
 pub enum PermutateArgument {
     Parameters(Parameters),
     Constants(Constants),
+    Types(Types),
     Permutations(Permutations),
 }
 
@@ -26,6 +28,8 @@ impl Parse for PermutateArgument {
             Ok(PermutateArgument::Parameters(Parameters::parse(input)?))
         } else if lookahead.peek(keywords::constants) {
             Ok(PermutateArgument::Constants(Constants::parse(input)?))
+        } else if lookahead.peek(keywords::types) {
+            Ok(PermutateArgument::Types(Types::parse(input)?))
         } else if lookahead.peek(keywords::permutations) {
             Ok(PermutateArgument::Permutations(Permutations::parse(input)?))
         } else {
@@ -44,7 +48,8 @@ impl Parse for PermutateAttribute {
             arguments: Punctuated::parse_separated_nonempty(input)?,
         };
 
-        attr.permutations()?.validate(attr.parameters()?, attr.constants()?)?;
+        attr.permutations()?
+            .validate(attr.parameters()?, attr.constants()?, attr.types()?)?;
 
         Ok(attr)
     }
@@ -75,6 +80,19 @@ impl PermutateAttribute {
                 }
             })
             .ok_or_else(|| Error::new(Span::call_site().into(), "Missing constants"))
+    }
+
+    pub fn types(&self) -> Result<&Types, Error> {
+        self.arguments
+            .iter()
+            .find_map(|arg| {
+                if let PermutateArgument::Types(types) = arg {
+                    Some(types)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::new(Span::call_site().into(), "Missing types"))
     }
 
     pub fn permutations(&self) -> Result<&Permutations, Error> {

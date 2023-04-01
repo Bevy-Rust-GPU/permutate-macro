@@ -36,7 +36,7 @@ impl Parse for Parameters {
             ident: input.parse()?,
             eq: input.parse()?,
             brace: braced!(content in input),
-            parameters: Punctuated::parse_separated_nonempty(&content)?,
+            parameters: Punctuated::parse_terminated(&content)?,
         };
 
         if !content.is_empty() {

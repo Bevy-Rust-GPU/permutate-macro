@@ -4,6 +4,52 @@ pub mod parameter_conditional;
 pub mod parameters;
 pub mod permutate_attribute;
 pub mod permutations;
+pub mod types {
+    use syn::{
+        braced,
+        parse::{Parse, ParseBuffer},
+        punctuated::Punctuated,
+        token::{Brace, Comma},
+        Error, Ident,
+    };
+
+    pub struct Type {
+        pub key: Ident,
+    }
+
+    impl Parse for Type {
+        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+            Ok(Type {
+                key: input.parse()?,
+            })
+        }
+    }
+
+    pub struct Types {
+        pub ident: Ident,
+        pub eq: syn::token::Eq,
+        pub brace: Brace,
+        pub types: Punctuated<Type, Comma>,
+    }
+
+    impl Parse for Types {
+        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+            let content: ParseBuffer;
+            let types = Types {
+                ident: input.parse()?,
+                eq: input.parse()?,
+                brace: braced!(content in input),
+                types: Punctuated::parse_terminated(&content)?,
+            };
+
+            if !content.is_empty() {
+                return Err(Error::new(content.span(), "unexpected token"));
+            }
+
+            Ok(types)
+        }
+    }
+}
 
 use proc_macro::Span;
 use proc_macro2::TokenStream;
@@ -11,8 +57,8 @@ use quote::{quote, ToTokens};
 
 use syn::{
     parse::Parse, parse_quote, visit_mut::VisitMut, AngleBracketedGenericArguments, Block, Error,
-    Expr, ExprCall, ExprLit, ExprMethodCall, GenericArgument, Ident, ItemFn,
-    Lit, LitBool, LitInt, Signature,
+    Expr, ExprCall, ExprLit, ExprMethodCall, GenericArgument, Ident, ItemFn, Lit, LitBool, LitInt,
+    Path, Signature,
 };
 
 use crate::permutate::permutations::Permutation;
@@ -21,94 +67,38 @@ use self::{
     attributes::Attributes, parameter_conditional::ParameterConditional, parameters::Parameters,
 };
 
-pub fn macro_impl(
-    attr: permutate_attribute::PermutateAttribute,
-    item_fn: ItemFn,
-) -> Result<TokenStream, Error> {
-    let parameters = attr.parameters()?;
-    let constants = attr.constants()?;
+struct PermutationVisitor<'a> {
+    parameters: &'a Parameters,
+    permutation: &'a Permutation,
+    ident: &'a Ident,
+}
 
-    // Calculate permutations
-    let permutations = attr.permutations()?;
-
-    let file_paths = permutations.file_paths();
-    let env_vars = permutations.env_vars();
-
-    let permutations = permutations.into_permutations(&item_fn.sig.ident, parameters, constants);
-
-    // Iterate permutations
-    let mut permutation_fns = vec![];
-
-    struct PermutationVisitor<'a> {
-        parameters: &'a Parameters,
-        permutation: &'a Permutation,
-        ident: &'a Ident,
-    }
-
-    impl VisitMut for PermutationVisitor<'_> {
-        fn visit_expr_method_call_mut(&mut self, expr_method_call: &mut ExprMethodCall) {
-            if let Some(turbofish) = expr_method_call.turbofish.as_mut() {
-                let mut args: Vec<GenericArgument> = vec![];
-
-                for arg in turbofish.args.iter() {
-                    match arg {
-                        syn::GenericArgument::Type(ty) => match ty {
-                            syn::Type::Macro(m) => {
-                                if m.mac.path.get_ident().unwrap() == self.ident {
-                                    let tokens = &m.mac.tokens;
-                                    let ident: Ident = parse_quote!(#tokens);
-                                    if let Some(val) = self.permutation.constants.get(&ident) {
-                                        args.push(GenericArgument::Const(Expr::Lit(
-                                            ExprLit {
-                                                attrs: Default::default(),
-                                                lit: match val {
-                                                    permutations::ConstantVal::Bool(val) => {
-                                                        Lit::Bool(LitBool {
-                                                            value: *val,
-                                                            span: ident.span(),
-                                                        })
-                                                    }
-                                                    permutations::ConstantVal::Uint(val) => {
-                                                        Lit::Int(LitInt::new(
-                                                            &val.to_string(),
-                                                            ident.span(),
-                                                        ))
-                                                    }
-                                                    permutations::ConstantVal::Int(val) => {
-                                                        Lit::Int(LitInt::new(
-                                                            &val.to_string(),
-                                                            ident.span(),
-                                                        ))
-                                                    }
-                                                },
-                                            },
-                                        )))
-                                    } else {
-                                        args.push(arg.clone())
-                                    }
-                                }
-                            }
-                            _ => args.push(arg.clone()),
-                        },
-                        _ => args.push(arg.clone()),
-                    }
-                }
-
-                turbofish.args = args.into_iter().collect();
+impl VisitMut for PermutationVisitor<'_> {
+    fn visit_path_mut(&mut self, path: &mut Path) {
+        if let Some((i, ty)) = path.segments.iter().enumerate().find_map(|(i, seg)| {
+            if let Some(ty) = self.permutation.types.get(&seg.ident) {
+                Some((i, ty))
+            } else {
+                None
             }
+        }) {
+            let mut segments = path.segments.iter().cloned().collect::<Vec<_>>();
 
-            syn::visit_mut::visit_expr_method_call_mut(self, expr_method_call)
+            segments.splice(i..=i, ty.path.segments.iter().cloned());
+
+            path.segments = segments.into_iter().collect();
         }
 
-        fn visit_angle_bracketed_generic_arguments_mut(
-            &mut self,
-            angle_bracketed_generic_args: &mut AngleBracketedGenericArguments,
-        ) {
+        syn::visit_mut::visit_path_mut(self, path);
+    }
+
+    fn visit_expr_method_call_mut(&mut self, expr_method_call: &mut ExprMethodCall) {
+        if let Some(turbofish) = expr_method_call.turbofish.as_mut() {
             let mut args: Vec<GenericArgument> = vec![];
 
-            for arg in angle_bracketed_generic_args.args.iter() {
+            for arg in turbofish.args.iter() {
                 match arg {
-                    GenericArgument::Type(ty) => match ty {
+                    syn::GenericArgument::Type(ty) => match ty {
                         syn::Type::Macro(m) => {
                             if m.mac.path.get_ident().unwrap() == self.ident {
                                 let tokens = &m.mac.tokens;
@@ -142,77 +132,145 @@ pub fn macro_impl(
                 }
             }
 
-            angle_bracketed_generic_args.args = args.into_iter().collect();
-
-            syn::visit_mut::visit_angle_bracketed_generic_arguments_mut(
-                self,
-                angle_bracketed_generic_args,
-            );
+            turbofish.args = args.into_iter().collect();
         }
 
-        fn visit_signature_mut(&mut self, signature: &mut Signature) {
-            let mut inputs = vec![];
-
-            for item in signature.inputs.iter() {
-                if let Some(item) = apply_parameter_conditional(
-                    self.parameters,
-                    self.permutation,
-                    self.ident,
-                    item.clone(),
-                )
-                .unwrap()
-                {
-                    inputs.push(item);
-                }
-            }
-
-            signature.inputs = inputs.into_iter().collect();
-
-            syn::visit_mut::visit_signature_mut(self, signature);
-        }
-
-        fn visit_block_mut(&mut self, block: &mut Block) {
-            let mut stmts = vec![];
-
-            for stmt in block.stmts.iter() {
-                if let Some(item) = apply_parameter_conditional(
-                    self.parameters,
-                    self.permutation,
-                    self.ident,
-                    stmt.clone(),
-                )
-                .unwrap()
-                {
-                    stmts.push(item);
-                }
-            }
-
-            block.stmts = stmts.into_iter().collect();
-
-            syn::visit_mut::visit_block_mut(self, block);
-        }
-
-        fn visit_expr_call_mut(&mut self, expr_call: &mut ExprCall) {
-            let mut args = vec![];
-
-            for arg in expr_call.args.iter() {
-                if let Some(arg) = apply_parameter_conditional(
-                    self.parameters,
-                    self.permutation,
-                    self.ident,
-                    arg.clone(),
-                )
-                .unwrap()
-                {
-                    args.push(arg);
-                }
-            }
-
-            expr_call.args = args.into_iter().collect();
-
-            syn::visit_mut::visit_expr_call_mut(self, expr_call);
-        }
+        syn::visit_mut::visit_expr_method_call_mut(self, expr_method_call)
     }
+
+    fn visit_angle_bracketed_generic_arguments_mut(
+        &mut self,
+        angle_bracketed_generic_args: &mut AngleBracketedGenericArguments,
+    ) {
+        let mut args: Vec<GenericArgument> = vec![];
+
+        for arg in angle_bracketed_generic_args.args.iter() {
+            match arg {
+                GenericArgument::Type(ty) => match ty {
+                    syn::Type::Macro(m) => {
+                        if m.mac.path.get_ident().unwrap() == self.ident {
+                            let tokens = &m.mac.tokens;
+                            let ident: Ident = parse_quote!(#tokens);
+                            if let Some(val) = self.permutation.constants.get(&ident) {
+                                args.push(GenericArgument::Const(Expr::Lit(ExprLit {
+                                    attrs: Default::default(),
+                                    lit: match val {
+                                        permutations::ConstantVal::Bool(val) => {
+                                            Lit::Bool(LitBool {
+                                                value: *val,
+                                                span: ident.span(),
+                                            })
+                                        }
+                                        permutations::ConstantVal::Uint(val) => {
+                                            Lit::Int(LitInt::new(&val.to_string(), ident.span()))
+                                        }
+                                        permutations::ConstantVal::Int(val) => {
+                                            Lit::Int(LitInt::new(&val.to_string(), ident.span()))
+                                        }
+                                    },
+                                })))
+                            } else {
+                                args.push(arg.clone())
+                            }
+                        }
+                    }
+                    _ => args.push(arg.clone()),
+                },
+                _ => args.push(arg.clone()),
+            }
+        }
+
+        angle_bracketed_generic_args.args = args.into_iter().collect();
+
+        syn::visit_mut::visit_angle_bracketed_generic_arguments_mut(
+            self,
+            angle_bracketed_generic_args,
+        );
+    }
+
+    fn visit_signature_mut(&mut self, signature: &mut Signature) {
+        let mut inputs = vec![];
+
+        for item in signature.inputs.iter() {
+            if let Some(item) = apply_parameter_conditional(
+                self.parameters,
+                self.permutation,
+                self.ident,
+                item.clone(),
+            )
+            .unwrap()
+            {
+                inputs.push(item);
+            }
+        }
+
+        signature.inputs = inputs.into_iter().collect();
+
+        syn::visit_mut::visit_signature_mut(self, signature);
+    }
+
+    fn visit_block_mut(&mut self, block: &mut Block) {
+        let mut stmts = vec![];
+
+        for stmt in block.stmts.iter() {
+            if let Some(item) = apply_parameter_conditional(
+                self.parameters,
+                self.permutation,
+                self.ident,
+                stmt.clone(),
+            )
+            .unwrap()
+            {
+                stmts.push(item);
+            }
+        }
+
+        block.stmts = stmts.into_iter().collect();
+
+        syn::visit_mut::visit_block_mut(self, block);
+    }
+
+    fn visit_expr_call_mut(&mut self, expr_call: &mut ExprCall) {
+        let mut args = vec![];
+
+        for arg in expr_call.args.iter() {
+            if let Some(arg) = apply_parameter_conditional(
+                self.parameters,
+                self.permutation,
+                self.ident,
+                arg.clone(),
+            )
+            .unwrap()
+            {
+                args.push(arg);
+            }
+        }
+
+        expr_call.args = args.into_iter().collect();
+
+        syn::visit_mut::visit_expr_call_mut(self, expr_call);
+    }
+}
+
+pub fn macro_impl(
+    attr: permutate_attribute::PermutateAttribute,
+    item_fn: ItemFn,
+) -> Result<TokenStream, Error> {
+    let parameters = attr.parameters()?;
+    let constants = attr.constants()?;
+    let types = attr.types()?;
+
+    // Calculate permutations
+    let permutations = attr.permutations()?;
+
+    let file_paths = permutations.file_paths();
+    let env_vars = permutations.env_vars();
+
+    let permutations =
+        permutations.into_permutations(&item_fn.sig.ident, parameters, constants, types);
+
+    // Iterate permutations
+    let mut permutation_fns = vec![];
 
     for permutation in permutations.into_iter() {
         // Create a new copy of the function
@@ -230,6 +288,29 @@ pub fn macro_impl(
                 .constants
                 .iter()
                 .map(|(key, value)| key.to_string() + "_" + &value.to_string())
+                .map(|t| "__".to_string() + &t)
+                .collect::<String>()
+            + &permutation
+                .types
+                .iter()
+                .map(|(key, value)| {
+                    key.to_string().to_lowercase()
+                        + "_"
+                        + &quote!(#value)
+                            .to_string()
+                            .replace(" ", "")
+                            .replace("\n", "")
+                            .replace("<", "_")
+                            .replace(">", "_")
+                            .replace("(", "_")
+                            .replace(")", "_")
+                            .replace("[", "_")
+                            .replace("]", "_")
+                            .replace("::", "_")
+                            .replace(",", "_")
+                            .trim_end_matches("_")
+                            .to_lowercase()
+                })
                 .map(|t| "__".to_string() + &t)
                 .collect::<String>();
 
@@ -250,14 +331,19 @@ pub fn macro_impl(
             &mut item_fn,
         );
 
-        permutation_fns.push(item_fn);
+        permutation_fns.push(quote!(
+            #[allow(non_snake_case)]
+            #item_fn
+        ));
     }
 
-    Ok(quote! {
+    let result = quote! {
         #(const _: &'static str = include_str!(#file_paths);)*
         #(const _: Option<&'static str> = option_env!(#env_vars);)*
         #(#permutation_fns)*
-    })
+    };
+
+    Ok(result)
 }
 
 /// Returns a filter function that will parse the given attribute,

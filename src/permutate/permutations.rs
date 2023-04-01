@@ -1,20 +1,23 @@
 use std::collections::BTreeMap;
 
 use json::JsonValue;
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream};
 use syn::{
     bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
     token::{Bracket, Comma, Or, Paren, Star, Brace, Colon},
-    Error, Ident, LitStr, braced, ExprLit, 
+    Error, Ident, LitStr, braced, ExprLit, parse_quote, TypePath, 
 };
 
-use super::{keywords, parameters::Parameters};
+use crate::permutate::types::Type;
+
+use super::{keywords, parameters::Parameters, types::Types};
 
 pub enum PermutationField {
     Parameters(Punctuated<PermutationVariant, Comma>),
     Constants(Punctuated<ConstantField, Comma>),
+    Types(Punctuated<TypeField, Comma>),
 }
 
 impl Parse for PermutationField {
@@ -25,21 +28,27 @@ impl Parse for PermutationField {
             let _eq: syn::token::Eq = input.parse()?;
             let content: ParseBuffer;
             let _bracket = bracketed!(content in input);
-            Ok(PermutationField::Parameters(Punctuated::parse_separated_nonempty(&content)?))
+            Ok(PermutationField::Parameters(Punctuated::parse_terminated(&content)?))
         } else if lookahead.peek(keywords::constants) {
             let _ident: Ident = input.parse()?;
             let _eq: syn::token::Eq = input.parse()?;
             let content: ParseBuffer;
             let _brace = braced!(content in input);
             Ok(PermutationField::Constants(Punctuated::parse_terminated(&content)?))
-        } else {
+        } else if lookahead.peek(keywords::types) {
+            let _ident: Ident = input.parse()?;
+            let _eq: syn::token::Eq = input.parse()?;
+            let content: ParseBuffer;
+            let _brace = braced!(content in input);
+            Ok(PermutationField::Types(Punctuated::parse_terminated(&content)?))
+        }else {
             Err(input.error("Unrecognized key"))
         }
     }
 }
 
 impl PermutationField {
-    fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
+    fn validate(&self, parameters: &Parameters, constants: &Constants, types: &Types) -> Result<(), Error> {
         match self {
             PermutationField::Parameters(params) => {
                 for (i, param) in params.iter().enumerate() {
@@ -51,6 +60,11 @@ impl PermutationField {
                     constant.validate(constants)?;
                 }
             },
+            PermutationField::Types(ts) => {
+                for ty in ts {
+                    ty.validate(types)?;
+                }
+            }
         }
 
         Ok(())
@@ -98,6 +112,47 @@ impl ConstantField {
     }
 }
 
+pub struct TypeField {
+    key: Ident,
+    _eq: syn::token::Eq,
+    value: TypePath,
+}
+
+impl Parse for TypeField {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(TypeField {
+            key: input.parse()?,
+            _eq: input.parse()?,
+            value: input.parse()?,
+        })
+    }
+}
+
+impl TypeField {
+    fn validate(&self, types: &Types) -> Result<(), Error> {
+        if types.types.iter().find(|ty| ty.key == self.key).is_none() {
+            let valid_types = types
+                .types
+                .iter()
+                .map(|ty| ty.key.to_string())
+                .enumerate()
+                .map(|(i, variant)| {
+                    variant
+                        + if i < types.types.len() - 1 {
+                            ", "
+                        } else {
+                            ""
+                        }
+                })
+                .collect::<String>();
+
+            return Err(Error::new(Span::call_site(), format!("Invalid type {}, valid types are [{valid_types:}]", self.key)));
+        }
+        
+        Ok(())
+    }
+}
+
 pub struct SynPermutation {
     pub _brace: Brace,
     pub fields: Punctuated<PermutationField, Comma>,
@@ -113,10 +168,38 @@ impl Parse for SynPermutation {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Clone)]
 pub struct Permutation {
     pub parameters: Vec<Ident>,
     pub constants: BTreeMap<Ident, ConstantVal>,
+    pub types: BTreeMap<Ident, TypePath>,
+}
+
+impl PartialEq for Permutation {
+    fn eq(&self, other: &Self) -> bool {
+        self.parameters.eq(&other.parameters) && self.constants.eq(&other.constants) && self.types.keys().eq(other.types.keys())
+    }
+}
+
+impl Eq for Permutation {}
+
+impl PartialOrd for Permutation {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        [self.parameters.partial_cmp(&other.parameters), self.constants.partial_cmp(&other.constants), self.types.keys().partial_cmp(other.types.keys())].into_iter().fold(None, |acc, next| {
+            match (acc, next) {
+                (None, None) => None,
+                (None, Some(rhs)) => Some(rhs),
+                (Some(lhs), None) => Some(lhs),
+                (Some(lhs), Some(rhs)) => Some(lhs.then(rhs)),
+            }
+        })
+    }
+}
+
+impl Ord for Permutation {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.parameters.cmp(&other.parameters).then(self.constants.cmp(&other.constants)).then(self.types.keys().cmp(other.types.keys()))
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -160,7 +243,12 @@ fn parse_file(
         panic!("Top-level permutations JSON is not an object");
     };
 
-    let source_path = mod_path.to_string() + "::" + &fn_ident.to_string();
+    let source_path = if mod_path.is_empty() {
+        fn_ident.to_string()
+    } else {
+        mod_path.to_string() + "::" + &fn_ident.to_string()
+    };
+
     let Some(entry_point) = object.get(&source_path) else {
         eprintln!("WARNING: No JSON entry point for source path {source_path:}");
         return Default::default()
@@ -193,6 +281,14 @@ fn parse_file(
                 panic!("Constants key is not an object");
             };
 
+            let Some(types) = object.get("types") else {
+                panic!("JSON permutation for entry point {entry_point:} has no types key");
+            };
+
+            let JsonValue::Object(types) = types else {
+                panic!("Types key is not an object");
+            };
+
             let parameters = parameters
                 .into_iter()
                 .map(|value| {
@@ -222,9 +318,21 @@ fn parse_file(
                 }
             }).collect();
 
+            let types = types.iter().map(|(key, value)| {
+                let key = Ident::new(key.into(), Span::call_site());
+                let Some(value) = value.as_str() else {
+                    panic!("JSON permutation variant for entry point {entry_point:} is not a string");
+                };
+                eprintln!("Parsing expr {value:}");
+                let tokens: TokenStream = value.parse().expect("Invalid tokens");
+                let value: TypePath = parse_quote!(#tokens);
+                (key, value)
+            }).collect();
+
             Permutation {
                 parameters, 
                 constants,
+                types,
             }
         })
         .collect::<Vec<_>>();
@@ -234,9 +342,9 @@ fn parse_file(
 
 impl SynPermutation {
     /// Ensure that all variants are defined in the provided [`Parameters`]
-    fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
+    fn validate(&self, parameters: &Parameters, constants: &Constants, types: &Types) -> Result<(), Error> {
         for field in self.fields.iter() {
-            field.validate(parameters, constants)?;
+            field.validate(parameters, constants, types)?;
         }
 
         Ok(())
@@ -268,7 +376,20 @@ impl SynPermutation {
             .ok_or_else(|| Error::new(Span::call_site().into(), "Missing constants"))
     }
 
-    fn into_permutations(&self, parameters: &Parameters, constants: &Constants) -> Vec<Permutation> {
+    pub fn types(&self) -> Result<&Punctuated<TypeField, Comma>, Error> {
+        self.fields
+            .iter()
+            .find_map(|arg| {
+                if let PermutationField::Types(types) = arg {
+                    Some(types)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::new(Span::call_site().into(), "Missing types"))
+    }
+
+    fn into_permutations(&self, parameters: &Parameters, constants: &Constants, types: &Types) -> Vec<Permutation> {
         let params = self.parameters().unwrap();
 
         let mut idents = vec![];
@@ -284,6 +405,7 @@ impl SynPermutation {
         }
 
         let consts = self.constants().unwrap();
+        let tys = self.types().unwrap();
 
         permutations(idents).into_iter().map(|permutation| Permutation {
             parameters: permutation,
@@ -302,6 +424,12 @@ impl SynPermutation {
                     (ConstantsVariant::Int(_), syn::Lit::Int(value)) => (ident.clone(), ConstantVal::Int(value.base10_parse::<i32>().unwrap())),
                     _ => unreachable!() // Already validated
                 }
+            }).collect(),
+            types: types.types.iter().map(|ty| {
+                let ident = &ty.key;
+                let candidate = tys.iter().find(|ty| ty.key == *ident).unwrap();
+
+                (ty.key.clone(), candidate.value.clone())
             }).collect()
         }).collect()
     }
@@ -356,9 +484,9 @@ pub enum PermutationsVariant {
 }
 
 impl PermutationsVariant {
-    fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
+    fn validate(&self, parameters: &Parameters, constants: &Constants, types: &Types) -> Result<(), Error> {
         match self {
-            PermutationsVariant::Literal(literal) => literal.validate(parameters, constants),
+            PermutationsVariant::Literal(literal) => literal.validate(parameters, constants, types),
             PermutationsVariant::File(_) => {
                 eprintln!("Warning: Validation is currently unsupported for permutation files.");
                 Ok(())
@@ -370,9 +498,9 @@ impl PermutationsVariant {
         }
     }
 
-    fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters, constants: &Constants) -> Vec<Permutation> {
+    fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters, constants: &Constants, types: &Types) -> Vec<Permutation> {
         match self {
-            PermutationsVariant::Literal(literal) => literal.into_permutations(parameters, constants),
+            PermutationsVariant::Literal(literal) => literal.into_permutations(parameters, constants, types),
             PermutationsVariant::File(file) => {
                 let mod_path = file.mod_path.value();
                 let path = file.file.value();
@@ -482,18 +610,18 @@ impl Parse for Permutations {
 
 impl Permutations {
     /// Ensure that all variants are defined in the provided [`Parameters`]
-    pub fn validate(&self, parameters: &Parameters, constants: &Constants) -> Result<(), Error> {
+    pub fn validate(&self, parameters: &Parameters, constants: &Constants, types: &Types) -> Result<(), Error> {
         for permutation in self.permutations.iter() {
-            permutation.validate(parameters, constants)?;
+            permutation.validate(parameters, constants, types)?;
         }
 
         Ok(())
     }
 
-    pub fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters, constants: &Constants) -> Vec<Permutation> {
+    pub fn into_permutations(&self, fn_ident: &Ident, parameters: &Parameters, constants: &Constants, types: &Types) -> Vec<Permutation> {
         let mut permutations = vec![];
         for permutation in self.permutations.iter() {
-            permutations.extend(permutation.into_permutations(fn_ident, parameters, constants))
+            permutations.extend(permutation.into_permutations(fn_ident, parameters, constants, types))
         }
         permutations.sort();
         permutations.dedup();
