@@ -10,8 +10,6 @@ use syn::{
     Error, Ident, LitStr, braced, ExprLit, parse_quote, TypePath, 
 };
 
-use crate::permutate::types::Type;
-
 use super::{keywords, parameters::Parameters, types::Types};
 
 pub enum PermutationField {
